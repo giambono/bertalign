@@ -388,16 +388,28 @@ def find_top_k_sents(src_vecs, tgt_vecs, k=3):
         D: numpy array. Similarity score matrix of shape (num_src_sents, k).
         I: numpy array. Target index matrix of shape (num_src_sents, k).
     """
+    # Configuration: Set to True to enable GPU FAISS (currently disabled due to bug)
+    USE_GPU_FAISS = False  # GPU FAISS has a bug returning all zeros
+
     embedding_size = src_vecs.shape[1]
-    # NOTE: GPU FAISS has a bug returning all zeros, using CPU version
-    # if torch.cuda.is_available() and platform == 'linux': # GPU version
+
+    # GPU version (disabled - set USE_GPU_FAISS=True to enable)
+    # NOTE: GPU FAISS currently has a bug returning all zeros, using CPU version instead
+    # if USE_GPU_FAISS and torch.cuda.is_available() and platform == 'linux':
     #     res = faiss.StandardGpuResources()
     #     index = faiss.IndexFlatIP(embedding_size)
     #     gpu_index = faiss.index_cpu_to_gpu(res, 0, index)
     #     gpu_index.add(tgt_vecs)
     #     D, I = gpu_index.search(src_vecs, k)
-    # else: # CPU version
+    # else:
+    #     # CPU version
+    #     index = faiss.IndexFlatIP(embedding_size)
+    #     index.add(tgt_vecs)
+    #     D, I = index.search(src_vecs, k)
+
+    # CPU version (active)
     index = faiss.IndexFlatIP(embedding_size)
     index.add(tgt_vecs)
     D, I = index.search(src_vecs, k)
+
     return D, I

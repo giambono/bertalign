@@ -1,0 +1,41 @@
+# Environment variables and secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated indices and data
+data/my_index/
+data/indices/
+*.faiss
+
+# Logs
+*.log
+alignment_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test files
+.pytest_cache/
+.coverage
+htmlcov/
