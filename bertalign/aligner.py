@@ -15,14 +15,18 @@ class Bertalign:
                  margin=True,
                  len_penalty=True,
                  is_split=False,
+                 min_win_size=250,
+                 percent=0.06
                ):
-        
+
         self.max_align = max_align
         self.top_k = top_k
         self.win = win
         self.skip = skip
         self.margin = margin
         self.len_penalty = len_penalty
+        self.min_win_size = min_win_size
+        self.percent = percent
         
         src = clean_text(src)
         tgt = clean_text(tgt)
@@ -68,10 +72,21 @@ class Bertalign:
         print("Performing first-step alignment ...")
         D, I = find_top_k_sents(self.src_vecs[0,:], self.tgt_vecs[0,:], k=self.top_k)
         first_alignment_types = get_alignment_types(2) # 0-1, 1-0, 1-1
-        first_w, first_path = find_first_search_path(self.src_num, self.tgt_num)
+        first_w, first_path = find_first_search_path(self.src_num, self.tgt_num,
+                                                      min_win_size=self.min_win_size,
+                                                      percent=self.percent)
         first_pointers = first_pass_align(self.src_num, self.tgt_num, first_w, first_path, first_alignment_types, D, I)
         first_alignment = first_back_track(self.src_num, self.tgt_num, first_pointers, first_path, first_alignment_types)
-        
+
+        # Handle empty first alignment
+        # if not first_alignment:
+        #     print("Warning: First-pass alignment found no matches. Creating default diagonal alignment.")
+        #     # Create a simple diagonal alignment as fallback
+        #     min_len = min(self.src_num, self.tgt_num)
+        #     first_alignment = [(i, i) for i in range(1, min_len + 1)]
+        #     # Add final bead to cover all sentences
+        #     first_alignment.append((self.src_num, self.tgt_num))
+
         print("Performing second-step alignment ...")
         second_alignment_types = get_alignment_types(self.max_align)
         second_w, second_path = find_second_search_path(first_alignment, self.win, self.src_num, self.tgt_num)
@@ -79,7 +94,7 @@ class Bertalign:
                                             second_w, second_path, second_alignment_types,
                                             self.char_ratio, self.skip, margin=self.margin, len_penalty=self.len_penalty)
         second_alignment = second_back_track(self.src_num, self.tgt_num, second_pointers, second_path, second_alignment_types)
-        
+
         print("Finished! Successfully aligning {} {} sentences to {} {} sentences\n".format(self.src_num, self.src_lang, self.tgt_num, self.tgt_lang))
         self.result = second_alignment
     

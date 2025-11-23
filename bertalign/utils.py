@@ -1,6 +1,24 @@
 import re
-from googletrans import Translator
+import json
+from langdetect import detect
 from sentence_splitter import SentenceSplitter
+
+
+def load_jsonl(jsonl_path):
+    """Load and parse the JSONL file."""
+    print(f"Loading data from {jsonl_path}...")
+    data = []
+    with open(jsonl_path, 'r', encoding='utf-8') as f:
+        for line_num, line in enumerate(f, 1):
+            try:
+                entry = json.loads(line.strip())
+                data.append(entry)
+            except json.JSONDecodeError as e:
+                print(f"Warning: Could not parse line {line_num}: {e}", file=sys.stderr)
+
+    print(f"Loaded {len(data)} entries")
+    return data
+
 
 def clean_text(text):
     clean_text = []
@@ -14,12 +32,9 @@ def clean_text(text):
     return "\n".join(clean_text)
     
 def detect_lang(text):
-    translator = Translator(service_urls=[
-      'translate.google.com.hk',
-    ])
     max_len = 200
     chunk = text[0 : min(max_len, len(text))]
-    lang = translator.detect(chunk).lang
+    lang = detect(chunk)
     if lang.startswith('zh'):
         lang = 'zh'
     return lang
