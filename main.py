@@ -1,12 +1,49 @@
 import os, sys
 import json
 import gc
-from typing import List, Dict, Tuple
+import numpy as np
+import psutil
+import torch
+from typing import List, Dict
 from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 
-from config import Config
 from bertalign import Bertalign
 from bertalign.utils import load_jsonl
+
+
+def get_memory_usage():
+    """Get current memory usage in GB."""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    return mem_info.rss / (1024 ** 3)  # Convert bytes to GB
+
+
+def aggressive_cleanup():
+    """Perform aggressive memory cleanup."""
+    # Force garbage collection multiple times
+    for _ in range(3):
+        gc.collect()
+
+    # Clear PyTorch cache if using GPU
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+
+    # Additional garbage collection
+    gc.collect()
+
+
+def json_serializable(obj):
+    """Convert numpy types to native Python types for JSON serialization."""
+    if isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
 def extract_alignments_with_metadata(
@@ -69,20 +106,44 @@ def save_alignments(alignments: List[Dict], output_path: str):
     """Save alignments to JSONL file."""
     with open(output_path, 'w', encoding='utf-8') as f:
         for alignment in alignments:
-            f.write(json.dumps(alignment, ensure_ascii=False) + '\n')
+            f.write(json.dumps(alignment, ensure_ascii=False, default=json_serializable) + '\n')
     print(f"Saved {len(alignments)} total alignments to {output_path}")
 
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python main.py <input_file.jsonl> [output_file.jsonl]")
+        print("Usage: python main.py <absolute_input_path.jsonl>")
         sys.exit(1)
 
-    input_filename = sys.argv[1]
-    output_filename = sys.argv[2] if len(sys.argv) > 2 else "alignment_results.jsonl"
+    input_path = sys.argv[1]  # Absolute path
 
-    input_path = os.path.join(Config.ROOT, "data", input_filename)
-    output_path = os.path.join(Config.ROOT, "data", output_filename)
+    # BERT aligner configuration
+    bert_config = {
+        "max_align": 4,        # Max chunks that can be combined
+        "min_win_size": 1,     # Minimum window size for first pass
+        "percent": 0.15,       # 15% of text length for window
+        "win": 20,             # Strict monotonicity window
+        "top_k": 10,           # Consider more candidates
+        "is_split": True       # Preserves chunk boundaries
+    }
+
+    # Generate experiment ID based on config and timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    config_id = f"ma{bert_config['max_align']}_p{int(bert_config['percent']*100)}_w{bert_config['win']}_k{bert_config['top_k']}"
+    experiment_id = f"exp_{config_id}_{timestamp}"
+
+    # Create experiments folder in input directory
+    input_dir = Path(input_path).parent
+    experiments_dir = input_dir / "experiments"
+    output_dir = experiments_dir / experiment_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Define output paths
+    output_path = output_dir / "alignment_results.jsonl"
+    metadata_path = output_dir / "metadata.json"
+
+    print(f"Experiment ID: {experiment_id}")
+    print(f"Output directory: {output_dir}")
 
     # Load data
     print(f"Loading data from {input_path}...")
@@ -97,12 +158,16 @@ def main():
         by_part[part][lang].append(item)
 
     parts = sorted(by_part.keys())
-    print(f"\nFound {len(parts)} parts: {parts}")
+    print(f"\nFound {len(parts)} parts: {parts[:10]}{'...' if len(parts) > 10 else ''}")
+
+    # Print initial memory usage
+    initial_memory = get_memory_usage()
+    print(f"Initial memory usage: {initial_memory:.2f} GB")
 
     all_alignments = []
 
     # Process each part
-    for part in parts:
+    for part_idx, part in enumerate(parts, 1):
         src_data = by_part[part]['en']
         tgt_data = by_part[part]['it']
 
@@ -129,12 +194,12 @@ def main():
         # Run alignment
         aligner = Bertalign(
             src_str, tgt_str,
-            max_align=2,         # Max chunks that can be combined
-            min_win_size=1,      # Minimum window size for first pass
-            percent=0.15,        # 15% of text length for window
-            win=10,               # Strict monotonicity window
-            top_k=10,            # Consider more candidates
-            is_split=True        # Preserves chunk boundaries
+            max_align=bert_config['max_align'],
+            min_win_size=bert_config['min_win_size'],
+            percent=bert_config['percent'],
+            win=bert_config['win'],
+            top_k=bert_config['top_k'],
+            is_split=bert_config['is_split']
         )
 
         aligner.align_sents()
@@ -153,9 +218,29 @@ def main():
 
         print(f"  Alignment types: {dict(sorted(alignment_types.items()))}")
 
+        # Memory before cleanup
+        mem_before_cleanup = get_memory_usage()
+
+        # Explicitly delete large arrays before deleting aligner
+        if hasattr(aligner, 'src_vecs'):
+            del aligner.src_vecs
+        if hasattr(aligner, 'tgt_vecs'):
+            del aligner.tgt_vecs
+        if hasattr(aligner, 'src_lens'):
+            del aligner.src_lens
+        if hasattr(aligner, 'tgt_lens'):
+            del aligner.tgt_lens
+
         # Clean up aligner to free memory
         del aligner
-        gc.collect()
+
+        # Perform aggressive memory cleanup
+        aggressive_cleanup()
+
+        # Memory after cleanup
+        mem_after_cleanup = get_memory_usage()
+        print(f"  Memory: {mem_before_cleanup:.2f} GB -> {mem_after_cleanup:.2f} GB (freed {mem_before_cleanup - mem_after_cleanup:.2f} GB)")
+        print(f"  Progress: {part_idx}/{len(parts)} parts processed")
 
     # Print overall statistics
     print(f"\n{'='*60}")
@@ -180,7 +265,39 @@ def main():
 
     # Save results
     print()
-    save_alignments(all_alignments, output_path)
+    save_alignments(all_alignments, str(output_path))
+
+    # Build metadata
+    alignment_stats = {}
+    for part, count in sorted(by_part_count.items()):
+        alignment_stats[part] = {
+            'total_alignments': count,
+            'alignment_types': {}
+        }
+
+    for alignment in all_alignments:
+        part = alignment['part']
+        atype = alignment['alignment_type']
+        if 'alignment_types' not in alignment_stats[part]:
+            alignment_stats[part]['alignment_types'] = {}
+        alignment_stats[part]['alignment_types'][atype] = alignment_stats[part]['alignment_types'].get(atype, 0) + 1
+
+    metadata = {
+        "experiment_id": experiment_id,
+        "timestamp": timestamp,
+        "input_file": input_path,
+        "output_file": str(output_path),
+        "total_alignments": len(all_alignments),
+        "bert_aligner_config": bert_config,
+        "alignment_statistics": alignment_stats,
+        "overall_alignment_types": dict(sorted(overall_types.items()))
+    }
+
+    with open(metadata_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    print(f"Saved metadata to {metadata_path}")
+    print(f"Experiment directory: {output_dir}")
 
     # Print examples
     print(f"\nFirst 3 alignments:")

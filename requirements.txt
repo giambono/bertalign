@@ -4,3 +4,4 @@ faiss-cpu
 langdetect
 sentence-splitter
 sentence-transformers
+psutil
