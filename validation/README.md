@@ -116,3 +116,89 @@ This validator is designed for **retrieval-focused validation**, not translation
 - **Focus**: Can a retrieval system successfully point to the target using the source?
 
 This approach is ideal for validating cross-lingual text alignment systems where the goal is semantic matching rather than translation accuracy.
+
+---
+
+## analyze_validation_results.py
+
+Analyzes validated JSONL files to compute statistics on validation success, alignment quality, and confidence scores.
+
+### Usage
+
+Basic analysis:
+```bash
+python validation/analyze_validation_results.py alignment_results.validated.jsonl
+```
+
+With verbose output:
+```bash
+python validation/analyze_validation_results.py alignment_results.validated.jsonl -v
+```
+
+Export summary to JSON:
+```bash
+python validation/analyze_validation_results.py alignment_results.validated.jsonl \
+    --export-summary summary.json
+```
+
+### Arguments
+
+- `input_file`: Path to validated JSONL file (required)
+- `-v, --verbose`: Show detailed output including low-confidence examples
+- `--export-summary`: Export summary statistics to JSON file
+- `--min-confidence`: Filter to records with confidence >= threshold
+- `--part`: Filter to specific part
+
+### Output
+
+The script provides comprehensive statistics:
+
+```
+================================================================================
+VALIDATION RESULTS ANALYSIS
+================================================================================
+
+## Overall Statistics
+Total records: 7144
+Validation successful: 7143 (100.0%)
+Validation errors: 1 (0.0%)
+
+## Alignment Quality (from successful validations)
+Valid alignments: 5855 (82.0%)
+Invalid alignments: 1288 (18.0%)
+
+## Confidence Scores
+Average: 0.837
+Median: 0.850
+Min: 0.700
+Max: 1.000
+Low confidence (<0.5): 0
+High confidence (≥0.9): 645
+
+## By Part
+Part          Total    Valid  Invalid   Errors     Valid%
+------------------------------------------------------------
+001            1364     1128      236        0      82.7%
+002             764      607      157        0      79.5%
+...
+
+## By Alignment Type
+Type          Total    Valid  Invalid     Valid%
+--------------------------------------------------
+1-1            4390     3366     1024      76.7%
+2-2            1237     1188       49      96.0%
+...
+```
+
+### Examples
+
+```bash
+# Analyze specific part
+python validation/analyze_validation_results.py results.validated.jsonl --part 001
+
+# Show only high-confidence alignments
+python validation/analyze_validation_results.py results.validated.jsonl --min-confidence 0.9
+
+# Verbose mode with low-confidence examples
+python validation/analyze_validation_results.py results.validated.jsonl -v
+```
