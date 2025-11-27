@@ -405,7 +405,8 @@ def create_html_template():
         let itPdf = null;
         let enCurrentPage = 1;
         let itCurrentPage = 1;
-        let isRendering = false;
+        let enRendering = false;
+        let itRendering = false;
 
         // Load PDFs
         async function loadPDFs() {
@@ -426,16 +427,25 @@ def create_html_template():
         }
 
         async function renderPage(lang, pageNum) {
-            if (isRendering) return;
-
             const pdf = lang === 'en' ? enPdf : itPdf;
             const canvas = document.getElementById(lang + 'Canvas');
             const ctx = canvas.getContext('2d');
             const pageInput = document.getElementById(lang + 'PageInput');
 
-            if (!pdf) return;
+            // Check language-specific rendering flag
+            if (lang === 'en') {
+                if (enRendering) return;
+                enRendering = true;
+            } else {
+                if (itRendering) return;
+                itRendering = true;
+            }
 
-            isRendering = true;
+            if (!pdf) {
+                if (lang === 'en') enRendering = false;
+                else itRendering = false;
+                return;
+            }
 
             try {
                 const page = await pdf.getPage(pageNum);
@@ -459,7 +469,11 @@ def create_html_template():
             } catch (error) {
                 console.error('Error rendering page:', error);
             } finally {
-                isRendering = false;
+                if (lang === 'en') {
+                    enRendering = false;
+                } else {
+                    itRendering = false;
+                }
             }
         }
 
