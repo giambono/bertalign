@@ -53,6 +53,10 @@ class PDFParallelViewer:
         """Search for text and return page info."""
         query = query.strip().lower()
 
+        # Part offsets for converting local page numbers to global page numbers
+        EN_PART_OFFSETS = {'001': 0, '002': 54, '003': 85, '004': 123, '005': 156, '006': 249}
+        IT_PART_OFFSETS = {'001': 0, '002': 44, '003': 68, '004': 97, '005': 124, '006': 193}
+
         # Find chunk
         found_chunk = None
         for chunk in self.chunks:
@@ -72,19 +76,33 @@ class PDFParallelViewer:
             chunks = alignment.get(field_to_search, [])
             for chunk in chunks:
                 if chunk['chunk_id'] == chunk_id:
-                    # Extract page numbers
-                    src_pages = [int(c['page']) for c in alignment.get('src_chunks', [])]
-                    tgt_pages = [int(c['page']) for c in alignment.get('tgt_chunks', [])]
+                    part = alignment.get('part', '001')
+
+                    # Extract local page numbers and convert to global
+                    src_chunks = alignment.get('src_chunks', [])
+                    tgt_chunks = alignment.get('tgt_chunks', [])
+
+                    if src_chunks:
+                        local_page = min([int(c['page']) for c in src_chunks])
+                        en_page = EN_PART_OFFSETS.get(part, 0) + local_page
+                    else:
+                        en_page = 1
+
+                    if tgt_chunks:
+                        local_page = min([int(c['page']) for c in tgt_chunks])
+                        it_page = IT_PART_OFFSETS.get(part, 0) + local_page
+                    else:
+                        it_page = 1
 
                     return {
                         'found': True,
                         'chunk_id': chunk_id,
                         'language': language,
-                        'en_page': min(src_pages) if src_pages else 1,
-                        'it_page': min(tgt_pages) if tgt_pages else 1,
+                        'en_page': en_page,
+                        'it_page': it_page,
                         'src_text': alignment['src_text'],
                         'tgt_text': alignment['tgt_text'],
-                        'part': alignment.get('part'),
+                        'part': part,
                         'confidence': alignment.get('validation', {}).get('confidence'),
                         'alignment_type': alignment.get('alignment_type')
                     }
@@ -277,7 +295,9 @@ def create_html_template():
             background: #1a1a1a;
             display: flex;
             justify-content: center;
+            align-items: flex-start;
             padding: 20px;
+            padding-bottom: 100px;
         }
 
         .pdf-canvas {
@@ -567,6 +587,19 @@ def create_html_template():
                     renderPage('it', result.it_page)
                 ]);
 
+                // Small delay to ensure rendering is complete
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Scroll to and highlight the search term on the appropriate PDF
+                const searchLang = result.language;
+                const searchText = query.toLowerCase();
+
+                if (searchLang === 'en') {
+                    await scrollToText('en', result.en_page, searchText);
+                } else {
+                    await scrollToText('it', result.it_page, searchText);
+                }
+
                 // Show info
                 document.getElementById('infoEnText').textContent = result.src_text;
                 document.getElementById('infoItText').textContent = result.tgt_text;
@@ -579,6 +612,54 @@ def create_html_template():
                 );
             } catch (error) {
                 setStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function scrollToText(lang, pageNum, searchText) {
+            const pdf = lang === 'en' ? enPdf : itPdf;
+            const container = document.getElementById(lang + 'Container');
+            const canvas = document.getElementById(lang + 'Canvas');
+
+            try {
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+
+                // Get all text items
+                const textItems = textContent.items;
+                let foundIndex = -1;
+                let combinedText = '';
+
+                // Build combined text and find search term
+                for (let i = 0; i < textItems.length; i++) {
+                    const text = textItems[i].str;
+                    const startPos = combinedText.length;
+                    combinedText += text + ' ';
+
+                    // Check if search term is in this range
+                    if (foundIndex === -1 && combinedText.toLowerCase().includes(searchText)) {
+                        foundIndex = i;
+                    }
+                }
+
+                if (foundIndex >= 0) {
+                    // Get the transform of the text item
+                    const item = textItems[foundIndex];
+                    const viewport = page.getViewport({ scale: 1.5 });
+
+                    // Calculate approximate Y position
+                    // PDF coordinates are bottom-up, canvas is top-down
+                    const pdfY = item.transform[5];
+                    const canvasY = viewport.height - pdfY;
+
+                    // Scroll the container to show this Y position
+                    // Center it in the view if possible
+                    const containerHeight = container.clientHeight;
+                    const scrollY = canvasY - (containerHeight / 2);
+
+                    container.scrollTop = Math.max(0, scrollY);
+                }
+            } catch (error) {
+                console.error('Error scrolling to text:', error);
             }
         }
 

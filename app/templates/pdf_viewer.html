@@ -152,7 +152,9 @@
             background: #1a1a1a;
             display: flex;
             justify-content: center;
+            align-items: flex-start;
             padding: 20px;
+            padding-bottom: 100px;
         }
 
         .pdf-canvas {
@@ -436,11 +438,29 @@
                     return;
                 }
 
+                console.log('Search result:', result);
+                console.log('Navigating to EN page:', result.en_page, 'IT page:', result.it_page);
+
                 // Navigate to pages
                 await Promise.all([
                     renderPage('en', result.en_page),
                     renderPage('it', result.it_page)
                 ]);
+
+                console.log('After renderPage - EN current:', enCurrentPage, 'IT current:', itCurrentPage);
+
+                // Small delay to ensure rendering is complete
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Scroll to and highlight the search term on the appropriate PDF
+                const searchLang = result.language;
+                const searchText = query.toLowerCase();
+
+                if (searchLang === 'en') {
+                    await scrollToText('en', result.en_page, searchText);
+                } else {
+                    await scrollToText('it', result.it_page, searchText);
+                }
 
                 // Show info
                 document.getElementById('infoEnText').textContent = result.src_text;
@@ -454,6 +474,54 @@
                 );
             } catch (error) {
                 setStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function scrollToText(lang, pageNum, searchText) {
+            const pdf = lang === 'en' ? enPdf : itPdf;
+            const container = document.getElementById(lang + 'Container');
+            const canvas = document.getElementById(lang + 'Canvas');
+
+            try {
+                const page = await pdf.getPage(pageNum);
+                const textContent = await page.getTextContent();
+
+                // Get all text items
+                const textItems = textContent.items;
+                let foundIndex = -1;
+                let combinedText = '';
+
+                // Build combined text and find search term
+                for (let i = 0; i < textItems.length; i++) {
+                    const text = textItems[i].str;
+                    const startPos = combinedText.length;
+                    combinedText += text + ' ';
+
+                    // Check if search term is in this range
+                    if (foundIndex === -1 && combinedText.toLowerCase().includes(searchText)) {
+                        foundIndex = i;
+                    }
+                }
+
+                if (foundIndex >= 0) {
+                    // Get the transform of the text item
+                    const item = textItems[foundIndex];
+                    const viewport = page.getViewport({ scale: 1.5 });
+
+                    // Calculate approximate Y position
+                    // PDF coordinates are bottom-up, canvas is top-down
+                    const pdfY = item.transform[5];
+                    const canvasY = viewport.height - pdfY;
+
+                    // Scroll the container to show this Y position
+                    // Center it in the view if possible
+                    const containerHeight = container.clientHeight;
+                    const scrollY = canvasY - (containerHeight / 2);
+
+                    container.scrollTop = Math.max(0, scrollY);
+                }
+            } catch (error) {
+                console.error('Error scrolling to text:', error);
             }
         }
 
