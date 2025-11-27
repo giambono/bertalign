@@ -312,9 +312,12 @@ def main():
     """Main entry point."""
     import sys
 
-    # Default paths
-    chunks_file = '../data/melancolia_della_resistenza.jsonl'
-    alignments_file = '../data/alignment_results.validated.jsonl'
+    # Default paths (relative to script location)
+    script_dir = Path(__file__).parent
+    data_dir = script_dir.parent / 'data'
+
+    chunks_file = data_dir / 'melancolia_della_resistenza.jsonl'
+    alignments_file = data_dir / 'alignment_results.validated.jsonl'
 
     # Allow command line arguments
     if len(sys.argv) > 1:

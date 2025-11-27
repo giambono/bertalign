@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Melancolia della Resistenza - PDF Parallel Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #2c3e50;
+            overflow: hidden;
+        }
+
+        .header {
+            background: #34495e;
+            color: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .search-group {
+            display: flex;
+            gap: 10px;
+            flex: 1;
+            min-width: 300px;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 14px;
+            border: none;
+            border-radius: 4px;
+        }
+
+        button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        .nav-btn {
+            background: #27ae60;
+            width: 40px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .nav-btn:hover {
+            background: #229954;
+        }
+
+        .page-info {
+            background: rgba(255,255,255,0.1);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 100px;
+            text-align: center;
+        }
+
+        .status {
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .status.success {
+            background: #27ae60;
+        }
+
+        .status.error {
+            background: #e74c3c;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+            height: calc(100vh - 120px);
+            background: #2c3e50;
+        }
+
+        .pdf-panel {
+            background: #34495e;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 2px solid #2c3e50;
+        }
+
+        .panel-header {
+            background: #2c3e50;
+            color: white;
+            padding: 10px;
+            font-weight: bold;
+            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-nav {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .panel-nav input {
+            width: 50px;
+            padding: 4px;
+            text-align: center;
+            border: none;
+            border-radius: 3px;
+        }
+
+        .pdf-container {
+            flex: 1;
+            overflow: auto;
+            background: #1a1a1a;
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .pdf-canvas {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            background: white;
+        }
+
+        .sync-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: white;
+        }
+
+        .info-panel {
+            background: rgba(52, 73, 94, 0.95);
+            color: white;
+            padding: 15px;
+            margin: 10px 20px;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .info-panel.show {
+            display: block;
+        }
+
+        .info-panel h3 {
+            margin-bottom: 10px;
+            color: #3498db;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            font-size: 13px;
+        }
+
+        .info-section {
+            background: rgba(0,0,0,0.2);
+            padding: 10px;
+            border-radius: 4px;
+        }
+
+        .info-label {
+            color: #95a5a6;
+            font-size: 11px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Melancolia della Resistenza - PDF Parallel Viewer</h1>
+        <div class="controls">
+            <div class="search-group">
+                <input type="text" id="searchInput" placeholder="Search text to sync pages...">
+                <button onclick="searchAndSync()">Find & Sync</button>
+            </div>
+
+            <div class="sync-checkbox">
+                <input type="checkbox" id="syncScroll" checked>
+                <label for="syncScroll">Sync Scroll</label>
+            </div>
+
+            <button class="nav-btn" onclick="previousPage()">◀</button>
+            <button class="nav-btn" onclick="nextPage()">▶</button>
+
+            <div id="status" class="status">Ready</div>
+        </div>
+    </div>
+
+    <div id="infoPanel" class="info-panel">
+        <h3>Search Result</h3>
+        <div class="info-grid">
+            <div class="info-section">
+                <div class="info-label">English Text</div>
+                <div id="infoEnText"></div>
+            </div>
+            <div class="info-section">
+                <div class="info-label">Italian Text</div>
+                <div id="infoItText"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="pdf-panel" id="enPanel">
+            <div class="panel-header">
+                <span>ENGLISH</span>
+                <div class="panel-nav">
+                    <button class="nav-btn" onclick="enPrevPage()">◀</button>
+                    <input type="number" id="enPageInput" value="1" min="1" onchange="enGoToPage()">
+                    <span class="page-info">/ <span id="enPageCount">-</span></span>
+                    <button class="nav-btn" onclick="enNextPage()">▶</button>
+                </div>
+            </div>
+            <div class="pdf-container" id="enContainer">
+                <canvas id="enCanvas" class="pdf-canvas"></canvas>
+            </div>
+        </div>
+
+        <div class="pdf-panel" id="itPanel">
+            <div class="panel-header">
+                <span>ITALIANO</span>
+                <div class="panel-nav">
+                    <button class="nav-btn" onclick="itPrevPage()">◀</button>
+                    <input type="number" id="itPageInput" value="1" min="1" onchange="itGoToPage()">
+                    <span class="page-info">/ <span id="itPageCount">-</span></span>
+                    <button class="nav-btn" onclick="itNextPage()">▶</button>
+                </div>
+            </div>
+            <div class="pdf-container" id="itContainer">
+                <canvas id="itCanvas" class="pdf-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let enPdf = null;
+        let itPdf = null;
+        let enCurrentPage = 1;
+        let itCurrentPage = 1;
+        let isRendering = false;
+
+        // Load PDFs
+        async function loadPDFs() {
+            try {
+                setStatus('Loading PDFs...', '');
+
+                enPdf = await pdfjsLib.getDocument('/pdfs/en.pdf').promise;
+                itPdf = await pdfjsLib.getDocument('/pdfs/it.pdf').promise;
+
+                document.getElementById('enPageCount').textContent = enPdf.numPages;
+                document.getElementById('itPageCount').textContent = itPdf.numPages;
+
+                await Promise.all([renderPage('en', 1), renderPage('it', 1)]);
+                setStatus('PDFs loaded successfully', 'success');
+            } catch (error) {
+                setStatus('Error loading PDFs: ' + error.message, 'error');
+            }
+        }
+
+        async function renderPage(lang, pageNum) {
+            if (isRendering) return;
+
+            const pdf = lang === 'en' ? enPdf : itPdf;
+            const canvas = document.getElementById(lang + 'Canvas');
+            const ctx = canvas.getContext('2d');
+            const pageInput = document.getElementById(lang + 'PageInput');
+
+            if (!pdf) return;
+
+            isRendering = true;
+
+            try {
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 1.5 });
+
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+
+                await page.render({
+                    canvasContext: ctx,
+                    viewport: viewport
+                }).promise;
+
+                if (lang === 'en') {
+                    enCurrentPage = pageNum;
+                } else {
+                    itCurrentPage = pageNum;
+                }
+
+                pageInput.value = pageNum;
+            } catch (error) {
+                console.error('Error rendering page:', error);
+            } finally {
+                isRendering = false;
+            }
+        }
+
+        // Navigation functions
+        function enPrevPage() {
+            if (enCurrentPage > 1) {
+                renderPage('en', enCurrentPage - 1);
+                if (document.getElementById('syncScroll').checked) {
+                    itPrevPage();
+                }
+            }
+        }
+
+        function enNextPage() {
+            if (enPdf && enCurrentPage < enPdf.numPages) {
+                renderPage('en', enCurrentPage + 1);
+                if (document.getElementById('syncScroll').checked) {
+                    itNextPage();
+                }
+            }
+        }
+
+        function itPrevPage() {
+            if (itCurrentPage > 1) {
+                renderPage('it', itCurrentPage - 1);
+            }
+        }
+
+        function itNextPage() {
+            if (itPdf && itCurrentPage < itPdf.numPages) {
+                renderPage('it', itCurrentPage + 1);
+            }
+        }
+
+        function previousPage() {
+            enPrevPage();
+            if (document.getElementById('syncScroll').checked) {
+                itPrevPage();
+            }
+        }
+
+        function nextPage() {
+            enNextPage();
+            if (document.getElementById('syncScroll').checked) {
+                itNextPage();
+            }
+        }
+
+        function enGoToPage() {
+            const pageNum = parseInt(document.getElementById('enPageInput').value);
+            if (pageNum >= 1 && pageNum <= enPdf.numPages) {
+                renderPage('en', pageNum);
+            }
+        }
+
+        function itGoToPage() {
+            const pageNum = parseInt(document.getElementById('itPageInput').value);
+            if (pageNum >= 1 && pageNum <= itPdf.numPages) {
+                renderPage('it', pageNum);
+            }
+        }
+
+        // Search functionality
+        async function searchAndSync() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                setStatus('Please enter text to search', 'error');
+                return;
+            }
+
+            setStatus('Searching...', '');
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({query})
+                });
+
+                const result = await response.json();
+
+                if (result.error) {
+                    setStatus('Error: ' + result.error, 'error');
+                    document.getElementById('infoPanel').classList.remove('show');
+                    return;
+                }
+
+                // Navigate to pages
+                await Promise.all([
+                    renderPage('en', result.en_page),
+                    renderPage('it', result.it_page)
+                ]);
+
+                // Show info
+                document.getElementById('infoEnText').textContent = result.src_text;
+                document.getElementById('infoItText').textContent = result.tgt_text;
+                document.getElementById('infoPanel').classList.add('show');
+
+                setStatus(
+                    `Found! Pages: EN ${result.en_page}, IT ${result.it_page} - ` +
+                    `Confidence: ${result.confidence?.toFixed(2) || 'N/A'}`,
+                    'success'
+                );
+            } catch (error) {
+                setStatus('Error: ' + error.message, 'error');
+            }
+        }
+
+        function setStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status' + (type ? ' ' + type : '');
+        }
+
+        // Allow Enter key to search
+        document.getElementById('searchInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchAndSync();
+        });
+
+        // Load PDFs on page load
+        window.addEventListener('load', loadPDFs);
+    </script>
+</body>
+</html>
