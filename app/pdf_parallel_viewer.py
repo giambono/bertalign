@@ -104,7 +104,8 @@ class PDFParallelViewer:
                         'tgt_text': alignment['tgt_text'],
                         'part': part,
                         'confidence': alignment.get('validation', {}).get('confidence'),
-                        'alignment_type': alignment.get('alignment_type')
+                        'alignment_type': alignment.get('alignment_type'),
+                        'query': query  # Add original query
                     }
 
         return {'error': 'No validated alignment found'}
@@ -590,15 +591,20 @@ def create_html_template():
                 // Small delay to ensure rendering is complete
                 await new Promise(resolve => setTimeout(resolve, 100));
 
-                // Scroll to and highlight the search term on the appropriate PDF
-                const searchLang = result.language;
-                const searchText = query.toLowerCase();
-
-                if (searchLang === 'en') {
-                    await scrollToText('en', result.en_page, searchText);
+                // Highlight using the actual user query for the searched language
+                let enSearchText, itSearchText;
+                if (result.language === 'en') {
+                    enSearchText = result.query;
+                    itSearchText = result.tgt_text.split(/\s+/).slice(0, 2).join(' ').toLowerCase();
                 } else {
-                    await scrollToText('it', result.it_page, searchText);
+                    itSearchText = result.query;
+                    enSearchText = result.src_text.split(/\s+/).slice(0, 2).join(' ').toLowerCase();
                 }
+
+                await Promise.all([
+                    scrollToText('en', result.en_page, enSearchText),
+                    scrollToText('it', result.it_page, itSearchText)
+                ]);
 
                 // Show info
                 document.getElementById('infoEnText').textContent = result.src_text;
@@ -621,6 +627,12 @@ def create_html_template():
             const canvas = document.getElementById(lang + 'Canvas');
 
             try {
+                // First, re-render the page to clear any previous highlights
+                await renderPage(lang, pageNum);
+
+                // Small delay to ensure render is complete
+                await new Promise(resolve => setTimeout(resolve, 100));
+
                 const page = await pdf.getPage(pageNum);
                 const textContent = await page.getTextContent();
                 const viewport = page.getViewport({ scale: 1.5 });
@@ -628,19 +640,63 @@ def create_html_template():
                 // Get all text items
                 const textItems = textContent.items;
                 let foundItems = [];
-                let combinedText = '';
 
-                // Build combined text and find all matching items
+                // Filter words: prefer longer words but keep at least some
+                const allWords = searchText.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                // Prioritize longer words to reduce false matches, but fallback to shorter if needed
+                let searchWords = allWords.filter(w => w.length > 4);
+                if (searchWords.length === 0) {
+                    searchWords = allWords.filter(w => w.length > 3);
+                }
+                if (searchWords.length === 0) {
+                    searchWords = allWords;
+                }
+
+                // Build continuous text with position tracking
+                let pageText = '';
+                let itemMap = [];
                 for (let i = 0; i < textItems.length; i++) {
-                    const text = textItems[i].str;
-                    const startPos = combinedText.length;
-                    combinedText += text + ' ';
+                    const start = pageText.length;
+                    const itemStr = textItems[i].str;
+                    pageText += itemStr + ' ';
+                    itemMap.push({ start, end: start + itemStr.length, index: i });
+                }
 
-                    // Check if this item contains part of the search term
-                    if (text.toLowerCase().includes(searchText.toLowerCase()) ||
-                        combinedText.toLowerCase().includes(searchText.toLowerCase())) {
-                        foundItems.push(textItems[i]);
+                // Match words with word boundaries
+                const matchedIndices = new Set();
+                const pageTextLower = pageText.toLowerCase();
+
+                for (const word of searchWords) {
+                    // Simple substring search in lowercase text
+                    const wordLower = word.toLowerCase();
+                    let index = pageTextLower.indexOf(wordLower);
+
+                    while (index !== -1) {
+                        // Check word boundaries manually
+                        const before = index > 0 ? pageTextLower[index - 1] : ' ';
+                        const after = index + wordLower.length < pageTextLower.length ?
+                                     pageTextLower[index + wordLower.length] : ' ';
+
+                        const isWordBoundaryBefore = !/[a-z0-9]/.test(before);
+                        const isWordBoundaryAfter = !/[a-z0-9]/.test(after);
+
+                        if (isWordBoundaryBefore && isWordBoundaryAfter) {
+                            // Find which text items contain this match
+                            for (const item of itemMap) {
+                                if (index >= item.start && index < item.end) {
+                                    matchedIndices.add(item.index);
+                                    break;
+                                }
+                            }
+                        }
+
+                        index = pageTextLower.indexOf(wordLower, index + 1);
                     }
+                }
+
+                // Collect matched items
+                for (const idx of matchedIndices) {
+                    foundItems.push(textItems[idx]);
                 }
 
                 if (foundItems.length > 0) {
@@ -648,15 +704,18 @@ def create_html_template():
                     const ctx = canvas.getContext('2d');
                     ctx.save();
 
+                    const scale = 1.5; // Must match viewport scale
+
                     for (const item of foundItems) {
                         const tx = item.transform;
                         // Transform matrix: [scaleX, skewY, skewX, scaleY, translateX, translateY]
-                        const x = tx[4];
-                        const y = tx[5];
-                        const width = item.width;
-                        const height = item.height;
+                        // Apply viewport scale to convert from PDF space to canvas space
+                        const x = tx[4] * scale;
+                        const y = tx[5] * scale;
+                        const width = item.width * scale;
+                        const height = item.height * scale;
 
-                        // Convert PDF coordinates to canvas coordinates
+                        // Convert PDF coordinates (bottom-up) to canvas coordinates (top-down)
                         const canvasX = x;
                         const canvasY = viewport.height - y;
 
@@ -677,7 +736,7 @@ def create_html_template():
 
                     // Scroll to the first found item
                     const firstItem = foundItems[0];
-                    const pdfY = firstItem.transform[5];
+                    const pdfY = firstItem.transform[5] * scale;
                     const canvasY = viewport.height - pdfY;
 
                     const containerHeight = container.clientHeight;
