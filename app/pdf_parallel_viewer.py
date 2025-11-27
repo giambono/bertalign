@@ -623,36 +623,63 @@ def create_html_template():
             try {
                 const page = await pdf.getPage(pageNum);
                 const textContent = await page.getTextContent();
+                const viewport = page.getViewport({ scale: 1.5 });
 
                 // Get all text items
                 const textItems = textContent.items;
-                let foundIndex = -1;
+                let foundItems = [];
                 let combinedText = '';
 
-                // Build combined text and find search term
+                // Build combined text and find all matching items
                 for (let i = 0; i < textItems.length; i++) {
                     const text = textItems[i].str;
                     const startPos = combinedText.length;
                     combinedText += text + ' ';
 
-                    // Check if search term is in this range
-                    if (foundIndex === -1 && combinedText.toLowerCase().includes(searchText)) {
-                        foundIndex = i;
+                    // Check if this item contains part of the search term
+                    if (text.toLowerCase().includes(searchText.toLowerCase()) ||
+                        combinedText.toLowerCase().includes(searchText.toLowerCase())) {
+                        foundItems.push(textItems[i]);
                     }
                 }
 
-                if (foundIndex >= 0) {
-                    // Get the transform of the text item
-                    const item = textItems[foundIndex];
-                    const viewport = page.getViewport({ scale: 1.5 });
+                if (foundItems.length > 0) {
+                    // Highlight all found text items
+                    const ctx = canvas.getContext('2d');
+                    ctx.save();
 
-                    // Calculate approximate Y position
-                    // PDF coordinates are bottom-up, canvas is top-down
-                    const pdfY = item.transform[5];
+                    for (const item of foundItems) {
+                        const tx = item.transform;
+                        // Transform matrix: [scaleX, skewY, skewX, scaleY, translateX, translateY]
+                        const x = tx[4];
+                        const y = tx[5];
+                        const width = item.width;
+                        const height = item.height;
+
+                        // Convert PDF coordinates to canvas coordinates
+                        const canvasX = x;
+                        const canvasY = viewport.height - y;
+
+                        // Draw yellow highlight rectangle with some transparency
+                        ctx.fillStyle = 'rgba(255, 255, 0, 0.4)';
+                        ctx.fillRect(canvasX, canvasY - height, width, height);
+
+                        // Draw colored underline
+                        ctx.strokeStyle = 'rgba(255, 165, 0, 0.8)';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(canvasX, canvasY);
+                        ctx.lineTo(canvasX + width, canvasY);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+
+                    // Scroll to the first found item
+                    const firstItem = foundItems[0];
+                    const pdfY = firstItem.transform[5];
                     const canvasY = viewport.height - pdfY;
 
-                    // Scroll the container to show this Y position
-                    // Center it in the view if possible
                     const containerHeight = container.clientHeight;
                     const scrollY = canvasY - (containerHeight / 2);
 
