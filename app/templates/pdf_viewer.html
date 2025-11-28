@@ -438,29 +438,32 @@
                     return;
                 }
 
-                console.log('Search result:', result);
-                console.log('Navigating to EN page:', result.en_page, 'IT page:', result.it_page);
-
                 // Navigate to pages
                 await Promise.all([
                     renderPage('en', result.en_page),
                     renderPage('it', result.it_page)
                 ]);
 
-                console.log('After renderPage - EN current:', enCurrentPage, 'IT current:', itCurrentPage);
-
                 // Small delay to ensure rendering is complete
                 await new Promise(resolve => setTimeout(resolve, 100));
 
-                // Scroll to and highlight the search term on the appropriate PDF
-                const searchLang = result.language;
-                const searchText = query.toLowerCase();
-
-                if (searchLang === 'en') {
-                    await scrollToText('en', result.en_page, searchText);
+                // Highlight using the actual user query for the searched language
+                // For the opposite language, use a significant portion of the aligned text
+                let enSearchText, itSearchText;
+                if (result.language === 'en') {
+                    enSearchText = result.query;
+                    // Use first 10 words or entire text if shorter
+                    itSearchText = result.tgt_text.split(/\s+/).slice(0, 10).join(' ').toLowerCase();
                 } else {
-                    await scrollToText('it', result.it_page, searchText);
+                    itSearchText = result.query;
+                    // Use first 10 words or entire text if shorter
+                    enSearchText = result.src_text.split(/\s+/).slice(0, 10).join(' ').toLowerCase();
                 }
+
+                await Promise.all([
+                    scrollToText('en', result.en_page, enSearchText),
+                    scrollToText('it', result.it_page, itSearchText)
+                ]);
 
                 // Show info
                 document.getElementById('infoEnText').textContent = result.src_text;
@@ -483,42 +486,211 @@
             const canvas = document.getElementById(lang + 'Canvas');
 
             try {
+                // First, re-render the page to clear any previous highlights
+                await renderPage(lang, pageNum);
+
+                // Small delay to ensure render is complete
+                await new Promise(resolve => setTimeout(resolve, 100));
+
                 const page = await pdf.getPage(pageNum);
                 const textContent = await page.getTextContent();
+                const viewport = page.getViewport({ scale: 1.5 });
 
                 // Get all text items
                 const textItems = textContent.items;
-                let foundIndex = -1;
-                let combinedText = '';
+                let foundItems = [];
 
-                // Build combined text and find search term
+                // Build continuous text with position tracking
+                let pageText = '';
+                let itemMap = [];
                 for (let i = 0; i < textItems.length; i++) {
-                    const text = textItems[i].str;
-                    const startPos = combinedText.length;
-                    combinedText += text + ' ';
+                    const start = pageText.length;
+                    const itemStr = textItems[i].str;
+                    pageText += itemStr + ' ';
+                    itemMap.push({ start, end: start + itemStr.length, index: i });
+                }
 
-                    // Check if search term is in this range
-                    if (foundIndex === -1 && combinedText.toLowerCase().includes(searchText)) {
-                        foundIndex = i;
+                const pageTextLower = pageText.toLowerCase();
+                const searchTextLower = searchText.toLowerCase();
+
+                // Normalize text by collapsing multiple spaces
+                const normalizedPageText = pageTextLower.replace(/\s+/g, ' ');
+                const normalizedSearchText = searchTextLower.replace(/\s+/g, ' ');
+
+                // Strategy 1: Try exact phrase match first
+                let phraseIndex = normalizedPageText.indexOf(normalizedSearchText);
+
+                if (phraseIndex !== -1) {
+                    // Found exact phrase - find all text items in this range
+                    const matchedIndices = new Set();
+                    const phraseEnd = phraseIndex + normalizedSearchText.length;
+
+                    for (const item of itemMap) {
+                        // Check if this item overlaps with the phrase match
+                        if (item.start < phraseEnd && item.end > phraseIndex) {
+                            matchedIndices.add(item.index);
+                        }
+                    }
+
+                    for (const idx of matchedIndices) {
+                        foundItems.push(textItems[idx]);
+                    }
+
+                    console.log(`Found exact phrase match with ${foundItems.length} text items`);
+                } else {
+                    // Strategy 2: Try n-gram matching (progressively smaller chunks)
+                    const words = searchTextLower.split(/\s+/).filter(w => w.length > 0);
+                    let bestMatch = { items: [], wordCount: 0 };
+
+                    // Try progressively smaller n-grams starting from full phrase
+                    for (let ngramSize = Math.min(words.length, 8); ngramSize >= 3; ngramSize--) {
+                        for (let start = 0; start <= words.length - ngramSize; start++) {
+                            const ngram = words.slice(start, start + ngramSize).join(' ');
+                            const ngramIndex = pageTextLower.indexOf(ngram);
+
+                            if (ngramIndex !== -1) {
+                                const matchedIndices = new Set();
+                                const ngramEnd = ngramIndex + ngram.length;
+
+                                for (const item of itemMap) {
+                                    if (item.start < ngramEnd && item.end > ngramIndex) {
+                                        matchedIndices.add(item.index);
+                                    }
+                                }
+
+                                if (matchedIndices.size > 0 && ngramSize > bestMatch.wordCount) {
+                                    bestMatch = {
+                                        items: Array.from(matchedIndices).map(idx => textItems[idx]),
+                                        wordCount: ngramSize
+                                    };
+                                }
+
+                                // If we found a good match (5+ words), stop searching
+                                if (ngramSize >= 5) break;
+                            }
+                        }
+
+                        if (bestMatch.wordCount >= 5) break;
+                    }
+
+                    if (bestMatch.items.length > 0) {
+                        foundItems = bestMatch.items;
+                        console.log(`Found ${bestMatch.wordCount}-word n-gram match with ${foundItems.length} text items`);
+                    } else {
+                        // Strategy 3: Proximity-based word matching (only if n-gram failed)
+                        // Find positions of key words and cluster them
+                        const wordPositions = [];
+                        const keyWords = words.filter(w => w.length > 4).slice(0, 5); // Max 5 longest words
+
+                        for (const word of keyWords) {
+                            let index = pageTextLower.indexOf(word);
+                            while (index !== -1) {
+                                wordPositions.push({ word, index, endIndex: index + word.length });
+                                index = pageTextLower.indexOf(word, index + 1);
+                            }
+                        }
+
+                        if (wordPositions.length > 0) {
+                            // Sort by position
+                            wordPositions.sort((a, b) => a.index - b.index);
+
+                            // Find the tightest cluster of words
+                            let bestCluster = { start: 0, end: 0, count: 0 };
+                            const maxDistance = 100; // Max 100 chars between words
+
+                            for (let i = 0; i < wordPositions.length; i++) {
+                                let clusterEnd = wordPositions[i].endIndex;
+                                let count = 1;
+
+                                for (let j = i + 1; j < wordPositions.length; j++) {
+                                    if (wordPositions[j].index - clusterEnd <= maxDistance) {
+                                        clusterEnd = wordPositions[j].endIndex;
+                                        count++;
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if (count > bestCluster.count) {
+                                    bestCluster = {
+                                        start: wordPositions[i].index,
+                                        end: clusterEnd,
+                                        count: count
+                                    };
+                                }
+                            }
+
+                            if (bestCluster.count > 0) {
+                                const matchedIndices = new Set();
+                                for (const item of itemMap) {
+                                    if (item.start < bestCluster.end && item.end > bestCluster.start) {
+                                        matchedIndices.add(item.index);
+                                    }
+                                }
+
+                                for (const idx of matchedIndices) {
+                                    foundItems.push(textItems[idx]);
+                                }
+
+                                console.log(`Found proximity-based match with ${bestCluster.count} words, ${foundItems.length} text items`);
+                            }
+                        }
                     }
                 }
 
-                if (foundIndex >= 0) {
-                    // Get the transform of the text item
-                    const item = textItems[foundIndex];
-                    const viewport = page.getViewport({ scale: 1.5 });
+                if (foundItems.length > 0) {
+                    // Limit highlighting if too many items matched (likely a bad match)
+                    const maxHighlightItems = 30;
+                    if (foundItems.length > maxHighlightItems) {
+                        console.warn(`Too many items matched (${foundItems.length}), limiting to first ${maxHighlightItems}`);
+                        foundItems = foundItems.slice(0, maxHighlightItems);
+                    }
 
-                    // Calculate approximate Y position
-                    // PDF coordinates are bottom-up, canvas is top-down
-                    const pdfY = item.transform[5];
+                    // Highlight all found text items
+                    const ctx = canvas.getContext('2d');
+                    ctx.save();
+
+                    const scale = 1.5; // Must match viewport scale
+
+                    for (const item of foundItems) {
+                        const tx = item.transform;
+                        // Transform matrix: [scaleX, skewY, skewX, scaleY, translateX, translateY]
+                        // Apply viewport scale to convert from PDF space to canvas space
+                        const x = tx[4] * scale;
+                        const y = tx[5] * scale;
+                        const width = item.width * scale;
+                        const height = item.height * scale;
+
+                        // Convert PDF coordinates (bottom-up) to canvas coordinates (top-down)
+                        const canvasX = x;
+                        const canvasY = viewport.height - y;
+
+                        // Draw yellow highlight rectangle with some transparency
+                        ctx.fillStyle = 'rgba(255, 255, 0, 0.4)';
+                        ctx.fillRect(canvasX, canvasY - height, width, height);
+
+                        // Draw colored underline
+                        ctx.strokeStyle = 'rgba(255, 165, 0, 0.8)';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(canvasX, canvasY);
+                        ctx.lineTo(canvasX + width, canvasY);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+
+                    // Scroll to the first found item
+                    const firstItem = foundItems[0];
+                    const pdfY = firstItem.transform[5] * scale;
                     const canvasY = viewport.height - pdfY;
 
-                    // Scroll the container to show this Y position
-                    // Center it in the view if possible
                     const containerHeight = container.clientHeight;
                     const scrollY = canvasY - (containerHeight / 2);
 
                     container.scrollTop = Math.max(0, scrollY);
+                } else {
+                    console.warn('No matches found for:', searchText);
                 }
             } catch (error) {
                 console.error('Error scrolling to text:', error);

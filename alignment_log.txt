@@ -1,0 +1,21 @@
+Experiment ID: exp_ma2_p15_w10_k10_20251123_122310
+Collecting markdown files from: /home/rp/data/melancolia_della_resistenza/chunking4/melancolia_della_resistenza
+Found 18492 total lines from markdown files
+
+Processing part 001...
+  Source (EN): 1909 lines
+  Target (IT): 1686 lines
+  Running BERT alignment...
+Source language: English, Number of sentences: 1909
+Target language: Italian, Number of sentences: 1686
+Embedding source and target text using LaBSE ...
+Performing first-step alignment ...
+Performing second-step alignment ...
+Finished! Successfully aligning 1909 English sentences to 1686 Italian sentences
+
+Traceback (most recent call last):
+  File "/home/rp/git/playground/bertalign/collect_md_files.py", line 207, in <module>
+    main()
+  File "/home/rp/git/playground/bertalign/collect_md_files.py", line 150, in main
+    src_aligned, tgt_aligned = aligner.get_sents()
+AttributeError: 'Bertalign' object has no attribute 'get_sents'. Did you mean: 'tgt_sents'?
